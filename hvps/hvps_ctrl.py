@@ -9,17 +9,15 @@
 # *************************************************************************************
 
 import argparse
-import configparser
-from configobj import ConfigObj
 import sys
-import os
-from pprint import pprint
 import time
 from os.path import exists
 
-from lib.hvps import (
-    HVPS_Class,
-)  # Class that contains high level wrapper functions for the HVPS,
+from configobj import ConfigObj
+
+from lib.hvps import HVPS_Class  # Class that contains high level wrapper functions for the HVPS,
+
+import mqtt as my_mqtt
 
 
 # *************************************************************************************
@@ -100,15 +98,11 @@ class hvps_ctrl:
         # find_channel_in_config: Checks that there is a config entry for the channel before taking action on it and confirms if the channel is enabled
         my_config_dict = self.config_dict[self.default_hvps_key]
         channel_entry = None
-        for my_channel_key in my_config_dict.keys():
-            if my_channel_key.startswith("CH_"):
-                if (
-                    my_config_dict[my_channel_key]["channel_num"]
-                    == str(self.channel_selected)
-                ) and my_config_dict[my_channel_key][
-                    "Enabled"
-                ].upper() == "True".upper():  # If channel exists in config file AND it is marked as ENABLED
-                    channel_entry = my_config_dict[my_channel_key]
+        for key, val in my_config_dict.items():
+            if key.startswith("CH_"):
+                # If channel exists in config file AND it is marked as ENABLED
+                if (val["channel_num"] == str(self.channel_selected)) and (val["Enabled"].upper() == "TRUE"):
+                    channel_entry = val
         return channel_entry  # Return the dict for the specified channel
 
     def compare_voltage(self, my_new_bias_voltage):
@@ -255,16 +249,18 @@ def process_cli_args(args, config_dict):
             channel_status_list = my_hvps_ctrl.HVPS[0].status_channel(
                 args.hvps_name, my_slot, args.channel_selected
             )
-            my_hvps_ctrl.HVPS[0].show_channel_status(channel_status_list)
+            # TODO: check if it is true
+            msg = my_hvps_ctrl.HVPS[0].show_channel_status(channel_status_list)
+            mqtt_client = my_mqtt.get_client()
+            my_mqtt.publish(mqtt_client, msg)
+
     elif args.bias_voltage != None:
         my_hvps_ctrl.bias()
-
     elif args.unbias == True:
         if args.channel_selected is None:
             print("Must specify --chan")
         else:
             my_hvps_ctrl.unbias_channel()
-
     elif args.action == "set_param":
         if args.channel_selected is None:
             print("Must specify --chan")
@@ -289,7 +285,6 @@ def process_cli_args(args, config_dict):
         my_hvps_ctrl.HVPS[0].set_channel_param(
             args.hvps_name, my_slot, int(args.chan_enable), "Pw", 0
         )  # Ensure we have 0 current set
-
     else:
         my_hvps_ctrl.HVPS[0].status_all_channels(args.hvps_name)
 
@@ -304,11 +299,11 @@ def process_config_file_configobj(config_file="hvps.cfg"):
     # process_config_file_configobj: Using ConfigObj to process config file into nested dict's
     if exists(config_file):
         config_dict = ConfigObj(config_file)  # Change this to config_file after testing
+        return config_dict
     else:
         print("Could not open config file:", config_file)
         print("Please specify using --config <config file name>")
         exit(1)
-    return config_dict
 
 
 def main():
@@ -331,9 +326,7 @@ def main():
         required=False,
         help="Unbias channel specified with --chan #",
     )
-    parser.add_argument(
-        "--action", choices=("unbias", "set_param"), required=False, default=None
-    )
+    parser.add_argument("--action", choices=("unbias", "set_param"), required=False, default=None)
 
     parser.add_argument(
         "--param",
